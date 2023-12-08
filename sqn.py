@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import torch.optim.lr_scheduler as lr_scheduler
 
 class StrongConvex(nn.Module):
     def __init__(self, num_dimensions, num_terms):
@@ -9,7 +10,6 @@ class StrongConvex(nn.Module):
         self.d = num_dimensions
         self.n = num_terms
         self.theta = torch.nn.Parameter(torch.rand(self.d))
-        print(f"Initial theta: {self.theta}")
 
     def forward(self, A, b):
         # A.shape = (n, d, d)
@@ -17,7 +17,7 @@ class StrongConvex(nn.Module):
         out = 0
         for i in range(len(A)):
             out += 0.5*self.theta.t()@A[i]@self.theta + b[i].t()@self.theta
-        return out
+        return out/self.n
 
 class SQN(torch.optim.Optimizer):
     def __init__(self, params, lr, delta, Gamma, Hessian):
@@ -31,7 +31,6 @@ class SQN(torch.optim.Optimizer):
                 state = self.state[p]
                 state["step"] = 0
                 state["Hessian"] = torch.eye(p.numel())
-                print(f"Initial Hessian {state['Hessian']}")
 
     def step(self, closure=None):
         """
@@ -62,7 +61,7 @@ class SQN(torch.optim.Optimizer):
 
                 theta_update = -lr*(torch.inverse(Hessian) + Gamma*torch.eye(Hessian.size(0)))@old_grad
                 p.data.add_(theta_update)
-                new_theta = p.data
+                new_theta = p.data.clone()
 
                 closure()
                 new_grad = p.grad.data
@@ -74,34 +73,44 @@ class SQN(torch.optim.Optimizer):
                     + delta*torch.eye(Hessian.size(0))
                 Hessian.add_(Hessian_update)
 
-        return loss
+        return loss, new_theta
     
 def get_qf(num_dimension, num_terms, rng):
     A, b = [], []
     for i in range(num_terms):
         A.append(np.diag(rng.uniform(1, 5, size=num_dimension)))
         b.append(rng.uniform(-1, 1, size=num_dimension))
-    return np.array(A), np.array(b)
+    return np.array(A), np.array(b),
+
+def get_exact(A, b):
+    theta = np.linalg.inv(np.sum(A, axis=0))@np.sum(-b, axis=0)
+    out = 0
+    for i in range(len(A)):
+        out += 0.5*theta.T@A[i]@theta + b[i].T@theta
+    return out/len(A), theta
 
 if __name__ == "__main__":
 
     rng = np.random.default_rng(seed=12345)
     torch.manual_seed(12345)
-    d = 50
+    d = 2
     N = 1000
     n = 5
-    lr = 0.005
+    lr = 0.01
     delta = 0.1
     Gamma = 1
-    num_epochs = 50
+    num_epochs = 1000
 
     A, b = get_qf(d, N, rng)
+
     model = StrongConvex(d, N)
     sqn = SQN(model.parameters(), lr=lr, delta=delta, Gamma=Gamma, Hessian=np.eye(d))
     sgd = torch.optim.SGD(model.parameters(), lr=lr)
     optimizer = sqn
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.9)
     
     losses = []
+    thetas = []
     for epoch in range(num_epochs):
 
         idxs = rng.choice(N, n, replace=False)
@@ -114,15 +123,46 @@ if __name__ == "__main__":
             loss.backward()
             return loss
         
-        loss = optimizer.step(closure=closure)
+        loss, new_theta = optimizer.step(closure=closure)
         losses.append(loss.item())
+        thetas.append(new_theta)
+        scheduler.step()
 
         if (epoch+1) % 10 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.5f}")
+    thetas = np.array(thetas)
+    solution, theta = get_exact(A, b)
+    print(f"Analytical solution: {solution}\n{theta}")
+    
+    def f(X, Y, A, b):
+        out = np.zeros(X.shape)
+        for i in range(X.shape[0]):
+            for j in range(X.shape[1]):
+                theta = np.array([X[i, j], Y[i, j]])
+                temp_out = 0
+                for k in range(len(A)):
+                    temp_out += 0.5*theta.T@A[k]@theta + b[k].T@theta
+                out[i, j] = temp_out
+        return out
 
+    x = np.linspace(-1, 1, 50)
+    y = np.linspace(-1, 1, 50)
+    X, Y = np.meshgrid(x, y)
+    Z = f(X, Y, A, b)
     fig, ax = plt.subplots()
-    ax.plot(np.arange(1, num_epochs + 1), losses, "k.-", lw=1, label="RES")
-    ax.set_ylabel(r"$f(\theta)$")
+    contour = ax.contourf(X, Y, Z, 50)
+    fig.colorbar(contour)
+    ax.plot(thetas[::10, 0], thetas[::10, 1], "k.-", lw=1)
+    fig.tight_layout()
+    fig.savefig("contour.png", dpi=150)
+
+    print(np.mean(losses[800:]))
+    errors = np.abs(losses - solution)
+    k = np.arange(1, num_epochs + 1)
+    fig, ax = plt.subplots()
+    ax.semilogy(k[::10], errors[::10], "k.-", lw=1, label="RES")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel(r"$|f(\theta) - f(\theta^*)|$")
     ax.grid()
     ax.legend()
     fig.tight_layout()
