@@ -20,6 +20,9 @@ class StrongConvex(nn.Module):
         return out/self.n
 
 class SQN(torch.optim.Optimizer):
+    """
+    Custom PyTorch Opimizer implementing the oBFGS and RES algorithms.
+    """
     def __init__(self, params, lr, delta, Gamma, Hessian):
         """
         Initializes parameters for the optimizer. These get put into the group dictionary.
@@ -131,7 +134,7 @@ if __name__ == "__main__":
     lr = 0.01 # learning rate
     delta = 0.1 # eigenvalue bound
     Gamma = 1 # constant appearing in Hessian update
-    num_epochs = 5000
+    num_epochs = 5
 
     # obtain sample of A and b
     A, b = get_qf(d, N, rng)
@@ -165,6 +168,7 @@ if __name__ == "__main__":
         
         loss, new_theta = optimizer.step(closure=closure)
         thetas.append(new_theta)
+        # losses.append(loss.item())
         # commenting this line is all that's needed to remove the effect of the scheduler
         scheduler.step()
 
