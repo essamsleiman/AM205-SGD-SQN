@@ -45,9 +45,9 @@ class SQN(torch.optim.Optimizer):
         Performs a single optimization step.
         """
         loss = None
+        print("here")
         if closure is not None:
             loss = closure()
-
         for group in self.param_groups:
             for p in group["params"]:
                 if p.grad is None:
@@ -72,6 +72,11 @@ class SQN(torch.optim.Optimizer):
                 old_grad = p.grad.data.clone()
 
                 # update parameter values
+                print("Hessian: ", Hessian.shape)
+                print("torch.eye(Hessian.size(0))): ", torch.eye(Hessian.size(0)).size())
+                print("old_grad: ", old_grad.shape)
+                old_grad = old_grad[0]
+                # print("new old_grad: ", old_grad.shape)
                 theta_update = -lr*(torch.inverse(Hessian) + Gamma*torch.eye(Hessian.size(0)))@old_grad
                 p.data.add_(theta_update)
                 new_theta = p.data.clone()
@@ -81,6 +86,7 @@ class SQN(torch.optim.Optimizer):
                 new_grad = p.grad.data
                 u = new_theta - old_theta
                 v = new_grad - old_grad - delta*u
+                print("v:", v.shape)
 
                 # update Hessian approximation, needs optimized
                 Hessian_update = torch.outer(v, v)/torch.dot(u, v) \
@@ -136,24 +142,8 @@ class LogisticRegressionTask(nn.Module):
         # Pass the input through the linear layer, then through sigmoid
         return torch.sigmoid(self.linear(x))
 
-def optimize_ML(model, epochs):
+def optimize_ML(X, y, model, epochs):
     criterion = nn.BCELoss()
-    iris = datasets.load_iris()
-    X = iris.data  # Features
-    y = iris.target  # Labels
-
-        # Convert to binary classification (Iris Setosa vs. others)
-    y = (y == 0).astype(int)
-
-    # Split the dataset into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    # Feature scaling
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-
-
     n_samples, n_features = X.shape
     # theta = np.zeros(n_features)
     losses = []
@@ -166,6 +156,9 @@ def optimize_ML(model, epochs):
                 # print('X_batch: ', X_batch.size())
                 # print('model: ', model)
                 outputs = model(X_batch)
+                print("outputs", outputs.shape)
+                
+
                 loss = criterion(outputs, y_batch)
                 # Backward and optimize
                 optimizer.zero_grad()
@@ -180,12 +173,41 @@ def optimize_ML(model, epochs):
     print('theta: ', theta)
     return theta, losses
 
-def optimize_StrongConvex(thetas, epochs):
-    for epoch in epochs:
+def optimize_ML_SQN(X, y, thetas, epochs):
+    n_samples, n_features = X.shape
+    criterion = nn.BCELoss()
+    for epoch in range(epochs):
         # randomly sample a batch of A and b to compute the stochastic gradients
-        idxs = rng.choice(N, n, replace=False)
-        A_batch = torch.tensor(A[idxs], dtype=torch.float32)
-        b_batch = torch.tensor(b[idxs], dtype=torch.float32)
+        def closure():
+            optimizer.zero_grad()
+            outputs = model(X_batch).squeeze(-1)
+            # print("outputs: ", outputs.size())
+            # print("outputs: ", outputs.squeeze(-1).size())
+            loss = criterion(outputs, y_batch)
+            # loss = model(A_batch, b_batch)
+            loss.backward()
+            return loss
+        
+        for j in range(0, n_samples, args.batch_size):
+            X_batch = torch.tensor(X[j:j+ args.batch_size], dtype=torch.float32).squeeze(-1)
+            y_batch = torch.tensor(y[j:j+ args.batch_size], dtype=torch.float32).unsqueeze(1).squeeze(-1)
+            print("X_batch", X_batch.shape)
+            print("y_batch", y_batch.shape)
+
+            loss, new_theta = optimizer.step(closure=closure)
+            thetas.append(np.array(new_theta))
+            # commenting this line is all that's needed to remove the effect of the scheduler
+            scheduler.step()
+
+        # print loss every few epochs
+        if (epoch+1) % 10 == 0:
+            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.5f}")
+    return thetas
+
+
+def optimize_StrongConvex(A_batch, b_batch, thetas, epochs):
+    for epoch in range(epochs):
+        # randomly sample a batch of A and b to compute the stochastic gradients
         
         # closure changes at every step because it's defined for a particular batch
         def closure():
@@ -265,13 +287,39 @@ if __name__ == "__main__":
     # thetas logs the parameters at every step
     thetas = []
     # primary training loop
+
+    # Data loading
     if args.model == "StrongConvex":
-        optimize_StrongConvex(thetas, args.epochs)
+        idxs = rng.choice(N, n, replace=False)
+        A_batch = torch.tensor(A[idxs], dtype=torch.float32)
+        b_batch = torch.tensor(b[idxs], dtype=torch.float32)
+    elif args.model == "ML":
+        iris = datasets.load_iris()
+        X = iris.data  # Features
+        y = iris.target  # Labels
+
+        # Convert to binary classification (Iris Setosa vs. others)
+        y = (y == 0).astype(int)
+
+        # Feature scaling
+        print("x: ",X.shape)
+        print("y: ",y.shape)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        A_batch = X_train
+        b_batch = y_train
+
+
+    if args.model == "StrongConvex":
+        optimize_StrongConvex(A_batch, b_batch, thetas, args.epochs)
         thetas = np.array(thetas)
 
     elif args.model == "ML":
-        theta, losses = optimize_ML(model, args.epochs)
-        thetas = theta
+        if args.optimizer == "SQN":
+            optimize_ML_SQN(A_batch, b_batch, thetas, args.epochs)
+            thetas = np.array(thetas)
+        else:
+            theta, losses = optimize_ML(model, args.epochs)
+            thetas = theta
 
         
     thetas = np.array(thetas)
