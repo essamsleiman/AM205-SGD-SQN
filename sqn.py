@@ -8,6 +8,7 @@ import numpy as np
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+import torch.nn.functional as F
 
 class StrongConvex(nn.Module):
     def __init__(self, num_dimensions, num_terms):
@@ -17,8 +18,6 @@ class StrongConvex(nn.Module):
         self.theta = torch.nn.Parameter(torch.rand(self.d))
 
     def forward(self, A, b):
-        # A.shape = (n, d, d)
-        # b.shape = d
         out = 0
         for i in range(len(A)):
             out += 0.5*self.theta.t()@A[i]@self.theta + b[i].t()@self.theta
@@ -40,12 +39,11 @@ class SQN(torch.optim.Optimizer):
                 state["step"] = 0
                 state["Hessian"] = torch.eye(p.numel())
 
-    def step(self, closure=None):
+    def stepML1(self, closure=None):
         """
         Performs a single optimization step.
         """
         loss = None
-        print("here")
         if closure is not None:
             loss = closure()
         for group in self.param_groups:
@@ -72,10 +70,6 @@ class SQN(torch.optim.Optimizer):
                 old_grad = p.grad.data.clone()
 
                 # update parameter values
-                # print("Hessian: ", Hessian.shape)
-                # print("torch.eye(Hessian.size(0))): ", torch.eye(Hessian.size(0)).size())
-                # print("old_grad: ", old_grad.shape)
-                # old_grad = old_grad[0]
                 old_grad = old_grad.view(-1) 
                 # print("new old_grad: ", old_grad.shape)
                 theta_update = -lr*(torch.inverse(Hessian) + Gamma*torch.eye(Hessian.size(0)))@old_grad
@@ -90,12 +84,70 @@ class SQN(torch.optim.Optimizer):
                 if len(u.size()) > 1:
                     u = u.squeeze(0)
                     v = v.squeeze(0)
-                # print("u:", u.shape)
-                # print("v:", v.shape)
 
                 # update Hessian approximation, needs optimized
-                # print("Hessian: ", )
-                # print("torch.outer(v, v): ", torch.outer(v, v))
+                Hessian_update = torch.outer(v, v)/torch.dot(u, v) \
+                    - torch.outer(torch.mv(Hessian, u), torch.matmul(u.t(), Hessian))/torch.dot(u, torch.mv(Hessian, u)) \
+                    + delta*torch.eye(Hessian.size(0))
+                Hessian.add_(Hessian_update)
+
+        return loss, new_theta
+    def stepML2(self, closure=None):
+        """
+        Performs a single optimization step.
+        """
+
+        loss = None
+        if closure is not None:
+            loss = closure()
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                
+                # state is a dictionary containing the dynamic parameters
+                state = self.state[p]
+                state["step"] += 1
+
+                # get the Hessian approximation
+                Hessian = state["Hessian"]
+                # get the update parameters
+                lr = group["lr"]
+                delta = group["delta"]
+                Gamma = group["Gamma"]
+
+                # get the current value of the parameters
+                old_theta = p.data.clone()
+                # closure zeros the gradient, computes a the loss, and returns it
+                closure()
+                # compute current gradient
+                old_grad = p.grad.data.clone()
+
+                # update parameter values
+                # added this line for ML  SQN
+                old_grad = old_grad.view(-1) 
+                
+                theta_update = -lr*(torch.inverse(Hessian) + Gamma*torch.eye(Hessian.size(0)))@old_grad
+                theta_update = theta_update.view_as(p.data)
+
+                p.data.add_(theta_update)
+                new_theta = p.data.clone()
+
+                # compute new gradient with SAME batch, NEW parameters
+                closure()
+                new_grad = p.grad.data
+                u = new_theta - old_theta
+
+                old_grad = old_grad.view(new_grad.shape)
+                v = new_grad - old_grad - delta*u
+
+                # added this line for ML  SQN
+                if len(u.size()) > 1:
+                    u = u.squeeze(0)
+                    v = v.squeeze(0)
+                v = v.view(-1)  # or v.flatten()
+                u = u.view(-1)  # or u.flatten()
+                # update Hessian approximation, needs optimized
                 Hessian_update = torch.outer(v, v)/torch.dot(u, v) \
                     - torch.outer(torch.mv(Hessian, u), torch.matmul(u.t(), Hessian))/torch.dot(u, torch.mv(Hessian, u)) \
                     + delta*torch.eye(Hessian.size(0))
@@ -140,73 +192,77 @@ def f(X, Y, A, b):
     return out
 
 
-class LogisticRegressionTask(nn.Module):
+class LogisticRegressionTaskML1(nn.Module):
+
     def __init__(self, input_dim):
-        super(LogisticRegressionTask, self).__init__()
+        super(LogisticRegressionTaskML1, self).__init__()
         # Linear layer
         self.linear = nn.Linear(input_dim, 1)
     
     def forward(self, x):
         # Pass the input through the linear layer, then through sigmoid
         return torch.sigmoid(self.linear(x))
+    
+class LogisticRegressionTaskML2(nn.Module):
+
+    def __init__(self, input_dim, hidden_dim):
+        super(LogisticRegressionTaskML2, self).__init__()
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, 1)
+    
+    def forward(self, x):
+        x = F.relu(self.linear1(x))  # Non-linear activation
+        return torch.sigmoid(self.linear2(x))
 
 def optimize_ML(X, y, model, epochs):
     criterion = nn.BCELoss()
     n_samples, n_features = X.shape
-    # theta = np.zeros(n_features)
     losses = []
     for epoch in range(epochs):
+            batch_loss = 0
             for j in range(0, n_samples, args.batch_size):
                 X_batch = torch.tensor(X[j:j+ args.batch_size], dtype=torch.float32)
                 y_batch = torch.tensor(y[j:j+ args.batch_size], dtype=torch.float32).unsqueeze(1)
 
                 # Forward pass
-                # print('X_batch: ', X_batch.size())
-                # print('model: ', model)
                 outputs = model(X_batch)
-                print("outputs", outputs.shape)
-                
-
                 loss = criterion(outputs, y_batch)
+
                 # Backward and optimize
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                batch_loss += loss.item()
+            losses.append(batch_loss)
+            print("epoch: ", epoch, "loss: ", sum(losses) / len(losses))
 
-            losses.append(loss.item())
-            print("epoch: ", epoch, "loss: ", sum(losses))
-
-    with torch.no_grad():
-        theta = model.linear.weight.detach().numpy().flatten()
-    print('theta: ', theta)
-    return theta, losses
+    # with torch.no_grad():
+        # theta = model.linear1.weight.detach().numpy().flatten()
+    # print('theta: ', theta)
+    return [], losses
 
 def optimize_ML_SQN(X, y, thetas, epochs):
     n_samples, n_features = X.shape
-    print("X: ", X.shape)
-    print("y: ", y.shape)
+
     losses = []
     criterion = nn.BCELoss()
     for epoch in range(epochs):
-        print("epoch: ", epoch)
         # randomly sample a batch of A and b to compute the stochastic gradients
         def closure():
             optimizer.zero_grad()
             outputs = model(X_batch).squeeze(-1)
-            # print("outputs: ", outputs.size())
-            # print("outputs: ", outputs.squeeze(-1).size())
             loss = criterion(outputs, y_batch)
-            # loss = model(A_batch, b_batch)
             loss.backward()
             return loss
         batch_loss = 0 
         for j in range(0, n_samples, args.batch_size):
             X_batch = torch.tensor(X[j:j+ args.batch_size], dtype=torch.float32).squeeze(-1)
             y_batch = torch.tensor(y[j:j+ args.batch_size], dtype=torch.float32).unsqueeze(1).squeeze(-1)
-            # print("X_batch", X_batch.shape)
-            # print("y_batch", y_batch.shape)
-
-            loss, new_theta = optimizer.step(closure=closure)
+            
+            if args.model == "ML1":
+                loss, new_theta = optimizer.stepML1(closure=closure)
+            elif args.model == "ML2":
+                loss, new_theta = optimizer.stepML2(closure=closure)
             batch_loss += loss.item()
             thetas.append(np.array(new_theta))
             # commenting this line is all that's needed to remove the effect of the scheduler
@@ -229,8 +285,11 @@ def optimize_StrongConvex(A_batch, b_batch, thetas, epochs):
             loss = model(A_batch, b_batch)
             loss.backward()
             return loss
-        
-        loss, new_theta = optimizer.step(closure=closure)
+        if args.optimizer == 'SQN':
+            loss, new_theta = optimizer.stepML1(closure=closure)
+        elif args.optimizer == 'SGD':
+            loss, new_theta = optimizer.step(closure=closure)
+
         thetas.append(np.array(new_theta))
         # commenting this line is all that's needed to remove the effect of the scheduler
         scheduler.step()
@@ -249,14 +308,14 @@ if __name__ == "__main__":
     parser.add_argument("--dim", type=int, default=2, help="Problem dimension")
     parser.add_argument("--data_points", type=int, default=1000, help="Number of data points")
     parser.add_argument("--batch_size", type=int, default=5, help="Batch size")
-    parser.add_argument("--lr", type=float, default=0.01, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
     parser.add_argument("--delta", type=float, default=0.1, help="Eigenvalue bound")
     parser.add_argument("--gamma", type=float, default=1, help="Constant in Hessian update")
     parser.add_argument("--epochs", type=int, default=5000, help="Number of epochs")
     parser.add_argument("--step_size", type=int, default=100, help="Step size for learning rate scheduler")
     parser.add_argument("--lr_gamma", type=float, default=0.9, help="Gamma for learning rate scheduler")
     parser.add_argument("--num_features", type=int, default=4, help="Number of features for ML problem")
-    parser.add_argument("--model", type=str, default="StrongConvex", choices=["StrongConvex", "ML"], help="Model to use (StrongConvex or ML)")
+    parser.add_argument("--model", type=str, default="StrongConvex", choices=["StrongConvex", "ML1", "ML2"], help="Model to use (StrongConvex or ML)")
     parser.add_argument("--optimizer", type=str, default="SQN", choices=["SQN", "SGD"], help="Optimizer to use (SQN or SGD)")
 
 
@@ -280,13 +339,17 @@ if __name__ == "__main__":
     # define the loss function/model
     if args.model == "StrongConvex":
         model = StrongConvex(d, N)
-    elif args.model == "ML":
-        model = LogisticRegressionTask(args.num_features)
+    elif args.model == "ML1":
+        model = LogisticRegressionTaskML1(args.num_features)
+    elif args.model == "ML2":
+        model = LogisticRegressionTaskML2(args.num_features, 8)
+
     else:
         model = None
 
 
     if args.optimizer == "SQN":
+        print("np.eye(d): ", d)
         optimizer = SQN(model.parameters(), lr=lr, delta=delta, Gamma=Gamma, Hessian=np.eye(d))
     elif args.optimizer == "SGD":
         optimizer = torch.optim.SGD(model.parameters(), lr=lr)
@@ -307,7 +370,8 @@ if __name__ == "__main__":
         idxs = rng.choice(N, n, replace=False)
         A_batch = torch.tensor(A[idxs], dtype=torch.float32)
         b_batch = torch.tensor(b[idxs], dtype=torch.float32)
-    elif args.model == "ML":
+
+    elif args.model == "ML1" or args.model == "ML2":
         iris = datasets.load_iris()
         X = iris.data  # Features
         y = iris.target  # Labels
@@ -326,7 +390,7 @@ if __name__ == "__main__":
         optimize_StrongConvex(A_batch, b_batch, thetas, args.epochs)
         thetas = np.array(thetas)
 
-    elif args.model == "ML":
+    elif args.model == "ML1" or args.model == "ML2":
         if args.optimizer == "SQN":
             losses = optimize_ML_SQN(A_batch, b_batch, thetas, args.epochs)
             thetas = np.array(thetas)
