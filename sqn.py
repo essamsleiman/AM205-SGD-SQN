@@ -72,10 +72,11 @@ class SQN(torch.optim.Optimizer):
                 old_grad = p.grad.data.clone()
 
                 # update parameter values
-                print("Hessian: ", Hessian.shape)
-                print("torch.eye(Hessian.size(0))): ", torch.eye(Hessian.size(0)).size())
-                print("old_grad: ", old_grad.shape)
-                old_grad = old_grad[0]
+                # print("Hessian: ", Hessian.shape)
+                # print("torch.eye(Hessian.size(0))): ", torch.eye(Hessian.size(0)).size())
+                # print("old_grad: ", old_grad.shape)
+                # old_grad = old_grad[0]
+                old_grad = old_grad.view(-1) 
                 # print("new old_grad: ", old_grad.shape)
                 theta_update = -lr*(torch.inverse(Hessian) + Gamma*torch.eye(Hessian.size(0)))@old_grad
                 p.data.add_(theta_update)
@@ -86,12 +87,19 @@ class SQN(torch.optim.Optimizer):
                 new_grad = p.grad.data
                 u = new_theta - old_theta
                 v = new_grad - old_grad - delta*u
-                print("v:", v.shape)
+                if len(u.size()) > 1:
+                    u = u.squeeze(0)
+                    v = v.squeeze(0)
+                # print("u:", u.shape)
+                # print("v:", v.shape)
 
                 # update Hessian approximation, needs optimized
+                # print("Hessian: ", )
+                # print("torch.outer(v, v): ", torch.outer(v, v))
                 Hessian_update = torch.outer(v, v)/torch.dot(u, v) \
                     - torch.outer(torch.mv(Hessian, u), torch.matmul(u.t(), Hessian))/torch.dot(u, torch.mv(Hessian, u)) \
                     + delta*torch.eye(Hessian.size(0))
+                # print("Hessian_update: ", Hessian_update.shape)
                 Hessian.add_(Hessian_update)
 
         return loss, new_theta
@@ -175,8 +183,12 @@ def optimize_ML(X, y, model, epochs):
 
 def optimize_ML_SQN(X, y, thetas, epochs):
     n_samples, n_features = X.shape
+    print("X: ", X.shape)
+    print("y: ", y.shape)
+    losses = []
     criterion = nn.BCELoss()
     for epoch in range(epochs):
+        print("epoch: ", epoch)
         # randomly sample a batch of A and b to compute the stochastic gradients
         def closure():
             optimizer.zero_grad()
@@ -187,22 +199,24 @@ def optimize_ML_SQN(X, y, thetas, epochs):
             # loss = model(A_batch, b_batch)
             loss.backward()
             return loss
-        
+        batch_loss = 0 
         for j in range(0, n_samples, args.batch_size):
             X_batch = torch.tensor(X[j:j+ args.batch_size], dtype=torch.float32).squeeze(-1)
             y_batch = torch.tensor(y[j:j+ args.batch_size], dtype=torch.float32).unsqueeze(1).squeeze(-1)
-            print("X_batch", X_batch.shape)
-            print("y_batch", y_batch.shape)
+            # print("X_batch", X_batch.shape)
+            # print("y_batch", y_batch.shape)
 
             loss, new_theta = optimizer.step(closure=closure)
+            batch_loss += loss.item()
             thetas.append(np.array(new_theta))
             # commenting this line is all that's needed to remove the effect of the scheduler
             scheduler.step()
 
+        losses.append(batch_loss)
         # print loss every few epochs
         if (epoch+1) % 10 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.5f}")
-    return thetas
+    return losses
 
 
 def optimize_StrongConvex(A_batch, b_batch, thetas, epochs):
@@ -308,19 +322,17 @@ if __name__ == "__main__":
         A_batch = X_train
         b_batch = y_train
 
-
     if args.model == "StrongConvex":
         optimize_StrongConvex(A_batch, b_batch, thetas, args.epochs)
         thetas = np.array(thetas)
 
     elif args.model == "ML":
         if args.optimizer == "SQN":
-            optimize_ML_SQN(A_batch, b_batch, thetas, args.epochs)
+            losses = optimize_ML_SQN(A_batch, b_batch, thetas, args.epochs)
             thetas = np.array(thetas)
         else:
-            theta, losses = optimize_ML(model, args.epochs)
+            theta, losses = optimize_ML(A_batch, b_batch, model, args.epochs)
             thetas = theta
-
         
     thetas = np.array(thetas)
     print("thetas: ", thetas.shape)
@@ -369,6 +381,7 @@ if __name__ == "__main__":
         print("k: ", k)
         print("losses: ", losses)
         ax.semilogy(k, losses, "k.-", lw=1, label="RES")
+        ax.loglog(k, 1/k, "k.-", lw=1, label="RES")
         ax.set_xlabel("Iteration")
         ax.set_ylabel(r"$f(\theta) - f(\theta^*)$")
         ax.grid()
