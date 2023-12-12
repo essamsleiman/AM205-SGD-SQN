@@ -59,8 +59,6 @@ class SGD(torch.optim.Optimizer):
                 # get the update parameters
                 lr = group["lr"]
 
-                # get the current value of the parameters
-                theta = p.data.clone()
                 # compute current gradient
                 grad = p.grad.data.clone()
 
@@ -194,9 +192,10 @@ def plot_contour(thetas, A, b, label, fig, ax, color):
 
 def plot_convergence(losses, solution, label, fig, ax, color):
     errors = losses - solution
-    k = np.arange(1, len(errors) + 1)
+    k = 5*np.arange(1, len(errors) + 1)
     ax.semilogy(k, errors, ".-", lw=1, color=color, label=label)
-    ax.set_xlabel("Iteration")
+    # ax.loglog([1e2, 1e4], [1e0, 1e-2], "k", lw=3)
+    ax.set_xlabel("Function Accesses")
     ax.set_ylabel(r"$f(\theta) - f(\theta^*)$")
     ax.grid()
     ax.legend()
@@ -238,8 +237,7 @@ def train(model, optimizer, A, b, num_epochs, N, n, steps=False):
             scheduler.step()
 
             # print loss every few epochs
-            if (i+1) % 10 == 0:
-                print(f"Epoch [{i+1}/{num_epochs}], Loss: {loss_batch.item():.7f}")
+        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss_batch.item():.7f}")
     return np.array(losses), np.array(thetas)
 
 if __name__ == "__main__":
@@ -253,8 +251,8 @@ if __name__ == "__main__":
     lr = 0.5 # learning rate
     delta = 1e-3 # eigenvalue bound
     Gamma = 1e-4 # constant appearing in Hessian update
-    kappa = 3 # controls condition number 10^kappa
-    num_epochs = 5
+    kappa = 5 # controls condition number 10^kappa
+    num_epochs = 10
 
     # obtain sample of A and b
     A, b = get_qf(d, N, kappa, rng)
@@ -264,19 +262,24 @@ if __name__ == "__main__":
     # get exact solution
     solution, theta = get_exact(A, b)
 
-    labels = ["RES", "SGD"]
-    colors = ["g", "r"]
+    labels = ["RES", "SGD", "oBFGS"]
+    colors = ["g", "r", "b"]
     fig_contour, ax_contour = plt.subplots()
     fig_converge, ax_converge = plt.subplots()
 
-    for i in range(2):
+    for i in range(3):
+        print(f"Starting {labels[i]}:")
         model = StrongConvex(d, N)
         if labels[i] == "RES":
-            optimizer = SQN(model.parameters(), lr=0.025, delta=delta, Gamma=Gamma, Hessian=np.eye(d))
-            scheduler = lr_scheduler.StepLR(optimizer, step_size=150, gamma=0.35)
+            optimizer = SQN(model.parameters(), lr=0.015, delta=delta, Gamma=Gamma, Hessian=np.eye(d))
+            scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
+            n = 5
+        if labels[i] == "oBFGS":
+            optimizer = SQN(model.parameters(), lr=0.015, delta=0, Gamma=0, Hessian=np.eye(d))
+            scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
             n = 5
         elif labels[i] == "SGD":
-            optimizer = SGD(model.parameters(), lr=1.25)
+            optimizer = SGD(model.parameters(), lr=1.5)
             scheduler = lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
             n = 1
         losses, thetas = train(model, optimizer, A_tensor, b_tensor, num_epochs, N, n, False)
@@ -289,7 +292,7 @@ if __name__ == "__main__":
     fig_contour.colorbar(cb)
     ax_contour.set_aspect("equal")
     fig_contour.tight_layout()
-    fig_contour.savefig("contour.png", dpi=150)
+    fig_contour.savefig("contour.png", dpi=350)
     fig_converge.tight_layout()
-    fig_converge.savefig("converge.png", dpi=150)
+    fig_converge.savefig("converge.png", dpi=350)
 

@@ -1,0 +1,23 @@
+rng = np.random.default_rng(seed=12345)
+torch.manual_seed(12345)
+d = 2 # problem dimension
+N = 1000 # number of data points
+n = 5 # batch size
+lr = 0.5 # learning rate
+delta = 1e-3 # eigenvalue bound
+Gamma = 1e-4 # constant appearing in Hessian update
+kappa = 0.5 # controls condition number 10^kappa
+num_epochs = 10
+
+if labels[i] == "RES":
+    optimizer = SQN(model.parameters(), lr=0.015, delta=delta, Gamma=Gamma, Hessian=np.eye(d))
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
+    n = 5
+if labels[i] == "oBFGS":
+    optimizer = SQN(model.parameters(), lr=0.015, delta=0, Gamma=0, Hessian=np.eye(d))
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.8)
+    n = 5
+elif labels[i] == "SGD":
+    optimizer = SGD(model.parameters(), lr=1.5)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.8)
+    n = 1
