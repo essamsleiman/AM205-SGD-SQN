@@ -1,4 +1,4 @@
-# AM205-SGD-SQN
+# An Examination of Stochastic Quasi-Newton Methods for Optimization in Multiple Dimensions
 
 ## Description
 
