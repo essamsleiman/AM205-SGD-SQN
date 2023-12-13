@@ -1,27 +1,5 @@
 # AM205-SGD-SQN
 
-Run these scripts to train different ML models on the wine-quality dataset with the three optimizers
-
-<!--  model ML1 is the convex problem -->
-
-1. python3 run_ml.py --model ML1 --epochs 10 --num_features 11 --batch_size 100
-
-<!--  model ML3 is the non-convex problem -->
-
-2. python3 run_ml.py --model ML3 --epochs 10 --num_features 11 --batch_size 100
-
-Run this script to get the minimum eigenvalue of the Hessian for the different ML models when trained with RES and oBFGS optimizers on the wine-quality dataset
-
-<!--  model ML1 is the convex problem -->
-
-1. python3 get_min_eig.py --model ML1 --epochs 10 --num_features 11 --batch_size 100
-
-<!--  model ML3 is the nonconvex problem, however this script will fail -->
-
-1. python3 get_min_eig.py --model ML3 --epochs 10 --num_features 11 --batch_size 100
-
-# AM205-SGD-SQN
-
 ## Description
 
 This project contains scripts to train different machine learning models on the wine-quality dataset using three different optimizers. Additionally, it provides a script to compute the minimum eigenvalue of the Hessian for the trained models when using specific optimizers.
