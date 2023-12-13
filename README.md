@@ -8,14 +8,21 @@ As optimization methods incorporating second-order information, i.e. the Hessian
 
 In this paper, we compare the performance of stochastic second-order methods to SGD and its variants, focusing on the family of stochastic quasi-Newton (SQN) methods. We begin by formally outlining the problem setting, describing how stochastic optimization methods arise as a technique for optimizing separable loss functions, which arise naturally when the objective is the expected value of a random variable. We also introduce SGD as one of the most popular approaches for addressing this type of problem and outline the limitations that motivate the exploration of second-order methods. Next, we describe the relevant theory underlying SQN methods, starting from the deterministic case and ending with the presentation of two SQN algorithms. In the following section, we specify the loss functions that we will investigate, and then, we present the results of our numerical experiments. Finally, we conclude with a summary and outlook.
 
-
 ## Description
 
 This project contains scripts to train different machine learning models on the wine-quality dataset using three different optimizers. Additionally, it provides a script to compute the minimum eigenvalue of the Hessian for the trained models when using specific optimizers.
 
 ## Usage
 
-### Training Machine Learning Models
+### 1. Optimizing LF1
+
+To optimize LF1, run the following script.
+
+```bash
+python3 all.py
+```
+
+### 2. Optimizing Machine Learning Models
 
 #### Model ML1 (Convex Problem)
 
